@@ -411,24 +411,62 @@ function buildPresets(){
     g.appendChild(b);
   });
 }
-function loadFile(f){
-  if(f.size>10*1024*1024){toast('File exceeds 10 MB limit','err');return;}
-  var r=new FileReader();
-  r.onload=function(ev){
-    var url=ev.target.result;var img=new Image();
-    img.onload=function(){
-      S.src=url;S.srcW=img.naturalWidth;S.srcH=img.naturalHeight;S.prevURL=url;
-      document.getElementById('thumb-img').src=url;
-      document.getElementById('thumb-dims').textContent=img.naturalWidth+'x'+img.naturalHeight;
-      document.getElementById('thumb').style.display='block';
-      document.getElementById('uz').style.display='none';
-      showPrev(url);clearGal();
-      document.getElementById('rst-btn').disabled=false;document.getElementById('exp-btn').disabled=false;
-      setSt('ready',mlbl(S.mode));updCB();updLB();updBB();toast('Car photo loaded','ok');
-      if(S.mode==='logo')initFabric(url);
-    };img.src=url;
-  };r.readAsDataURL(f);
+function loadFile(f) {
+  var MAX_MB = 10;
+  if (f.size > MAX_MB * 1024 * 1024) {
+    toast('File is ' + (f.size/1024/1024).toFixed(1) + ' MB — max is ' + MAX_MB + ' MB', 'err');
+    return;
+  }
+  toast('Loading photo...');
+  var r = new FileReader();
+  r.onerror = function() { toast('Could not read file', 'err'); };
+  r.onload = function(ev) {
+    var dataURL = ev.target.result;
+    var img = new Image();
+    img.onerror = function() { toast('Could not decode image', 'err'); };
+    img.onload = function() {
+      // Downscale very large images to max 2000px on longest side for performance
+      var MAX_DIM = 2000;
+      var finalURL = dataURL;
+      if (img.width > MAX_DIM || img.height > MAX_DIM) {
+        var ratio = Math.min(MAX_DIM / img.width, MAX_DIM / img.height);
+        var W = Math.round(img.width * ratio);
+        var H = Math.round(img.height * ratio);
+        var c = document.createElement('canvas');
+        c.width = W; c.height = H;
+        var ctx = c.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, W, H);
+          finalURL = c.toDataURL('image/jpeg', 0.92);
+          toast('Photo resized to ' + W + 'x' + H + ' for performance');
+        }
+      }
+      S.src    = finalURL;
+      S.srcW   = img.width;
+      S.srcH   = img.height;
+      S.prevURL = finalURL;
+
+      document.getElementById('thumb-img').src = finalURL;
+      document.getElementById('thumb-dims').textContent = img.width + 'x' + img.height;
+      document.getElementById('thumb').style.display = 'block';
+      document.getElementById('uz').style.display = 'none';
+
+      showPrev(finalURL);
+      clearGal();
+
+      document.getElementById('rst-btn').disabled = false;
+      document.getElementById('exp-btn').disabled = false;
+      setSt('ready', mlbl(S.mode));
+      updCB(); updLB(); updBB();
+      toast('Photo loaded — pick a colour and hit Apply ✓', 'ok');
+
+      if (S.mode === 'logo') initFabric(finalURL);
+    };
+    img.src = dataURL;
+  };
+  r.readAsDataURL(f);
 }
+
 function mlbl(m){return m==='color'?'Color Changer - Canny ControlNet':m==='livery'?'Livery Generator - Depth ControlNet':'Logo Placement - Fabric.js Canvas';}
 function switchMode(m){
   S.mode=m;
@@ -474,10 +512,210 @@ function setProg(pct,st){document.getElementById('prog-fill').style.width=Math.r
 function setSt(type,txt){var d=document.getElementById('st-dot');d.className='st-dot'+(type==='ready'?' ready':type==='busy'?' busy':'');document.getElementById('st-txt').textContent=txt;}
 async function callFal(ep,payload){var res=await fetch('https://fal.run/'+ep,{method:'POST',headers:{'Authorization':'Key '+S.cfg.falKey,'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)throw new Error('Fal.ai '+res.status);var d=await res.json();return d.images&&d.images[0]?d.images[0].url:null;}
 async function url2b64(url){var res=await fetch(url);var blob=await res.blob();return new Promise(function(resolve){var r=new FileReader();r.onload=function(e){resolve(e.target.result);};r.readAsDataURL(blob);});}
-function mockColor(color,cb){var c=document.createElement('canvas');var img=new Image();img.onload=function(){c.width=img.width;c.height=img.height;var ctx=c.getContext('2d');ctx.drawImage(img,0,0);var probe=document.createElement('canvas');probe.width=1;probe.height=1;var pc=probe.getContext('2d');pc.fillStyle=color;pc.fillRect(0,0,1,1);var d=pc.getImageData(0,0,1,1).data;var id=ctx.getImageData(0,0,c.width,c.height);var px=id.data;for(var i=0;i<px.length;i+=4){var l=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];var tl=0.299*d[0]+0.587*d[1]+0.114*d[2];var s=tl>0?l/tl:1;var bl=0.5;px[i]=Math.min(255,Math.round(px[i]*(1-bl)+(d[0]*s)*bl));px[i+1]=Math.min(255,Math.round(px[i+1]*(1-bl)+(d[1]*s)*bl));px[i+2]=Math.min(255,Math.round(px[i+2]*(1-bl)+(d[2]*s)*bl));}ctx.putImageData(id,0,0);ctx.globalCompositeOperation='color';ctx.globalAlpha=0.45;ctx.fillStyle='rgb('+d[0]+','+d[1]+','+d[2]+')';ctx.fillRect(0,0,c.width,c.height);ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;cb(c.toDataURL('image/jpeg',.92));};img.src=S.src;}
-function mockLivery(prompt,cb){var c=document.createElement('canvas');var img=new Image();img.onload=function(){c.width=img.width;c.height=img.height;var ctx=c.getContext('2d');ctx.drawImage(img,0,0);var h=200;if(/red|fire|camo/i.test(prompt))h=0;else if(/gold|chrome/i.test(prompt))h=45;else if(/green|british|gulf/i.test(prompt))h=120;else if(/teal|cyan|arctic/i.test(prompt))h=180;else if(/purple|cyberpunk|tokyo|magenta/i.test(prompt))h=280;else if(/orange|papaya/i.test(prompt))h=30;else h=Math.floor(Math.random()*360);var h2=(h+130)%360;ctx.globalCompositeOperation='overlay';ctx.globalAlpha=0.7;var grd=ctx.createLinearGradient(0,0,c.width,c.height);grd.addColorStop(0,'hsl('+h+',90%,30%)');grd.addColorStop(.5,'hsl('+h2+',100%,50%)');grd.addColorStop(1,'hsl('+h+',90%,20%)');ctx.fillStyle=grd;ctx.fillRect(0,0,c.width,c.height);ctx.globalCompositeOperation='screen';ctx.strokeStyle='hsl('+h2+',100%,70%)';ctx.lineWidth=c.height*.035;for(var i=0;i<5;i++){ctx.beginPath();var y=c.height*(.15+i*.18);ctx.moveTo(0,y);ctx.bezierCurveTo(c.width*.25,y-c.height*.04,c.width*.75,y+c.height*.04,c.width,y);ctx.globalAlpha=0.22-i*0.03;ctx.stroke();ctx.globalAlpha=1;}ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;cb(c.toDataURL('image/jpeg',.92));};img.src=S.src;}
-async function runColor(){var color=document.getElementById('clr-in').value.trim();if(!color){toast('Enter a colour','err');return;}if(!S.src||S.gen)return;setSt('busy','Applying paint change...');startProg(['Analysing car body...','Building Canny edge map...','Applying colour...','Preserving livery...','Adjusting reflections...']);try{var resultURL=null;if(S.cfg.provider==='fal'&&S.cfg.falKey){toast('Sending to Fal.ai...');var url=await callFalWithProgress('fal-ai/controlnet-sdxl',{image_url:S.src,prompt:'Professional automotive paint change to '+color+'. Preserve all existing livery graphics sponsor decals racing numbers window tints reflections. Only bare metal body panels change colour. ControlNet Canny edge locking. Photorealistic studio lighting.',negative_prompt:'blurry low quality deformed changed livery changed decals removed graphics changed background',controlnet_type:'canny',controlnet_conditioning_scale:1.2,strength:0.45,guidance_scale:7.5,num_inference_steps:30,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}if(!resultURL)await new Promise(function(r){mockColor(color,function(d){resultURL=d;r();});});endProg();S.prevURL=resultURL;showPrev(resultURL);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=false;addGal(resultURL,'Paint - '+color,'color');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Paint applied via Fal.ai':'Paint applied (add Fal.ai key in Settings for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
-async function runLivery(){var prompt=document.getElementById('liv-prompt').value.trim();if(!prompt){toast('Describe the livery','err');return;}if(!S.src||S.gen)return;setSt('busy','Generating livery...');startProg(['Building depth map...','Parsing description...','Designing livery...','Applying graphics...','Matching lighting...','Rendering...']);try{var resultURL=null;if(S.cfg.provider==='fal'&&S.cfg.falKey){toast('Sending to Fal.ai...');var url=await callFalWithProgress('fal-ai/controlnet-sdxl',{image_url:S.src,prompt:'Professional automotive racing livery: '+prompt+'. Complete photorealistic racing livery across entire car body respecting body panel geometry with specular highlights and environmental reflections. Ultra high detail studio automotive photography 8K.',negative_prompt:'blurry low quality deformed changed background broken windows wrong wheel design',controlnet_type:'depth',controlnet_conditioning_scale:0.85,strength:0.78,guidance_scale:8.5,num_inference_steps:35,seed:Math.floor(Math.random()*9999999)}, function(pct,st){setProg(pct,st);});if(url)resultURL=await url2b64(url);}if(!resultURL)await new Promise(function(r){mockLivery(prompt,function(d){resultURL=d;r();});});endProg();S.prevURL=resultURL;showPrev(resultURL);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=false;addGal(resultURL,'Livery - '+prompt.slice(0,22)+'...','livery');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Livery generated via Fal.ai':'Livery generated (add Fal.ai key for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
+function mockColor(color, cb) {
+  var MAX = 1400; // max canvas dimension - avoids memory issues with large photos
+  var img = new Image();
+  img.onload = function() {
+    try {
+      var ratio = Math.min(MAX / img.width, MAX / img.height, 1);
+      var W = Math.round(img.width * ratio);
+      var H = Math.round(img.height * ratio);
+      var c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      var ctx = c.getContext('2d');
+      if (!ctx) { cb(S.src); return; }
+      ctx.drawImage(img, 0, 0, W, H);
+      // Resolve color to RGB
+      var probe = document.createElement('canvas');
+      probe.width = 1; probe.height = 1;
+      var pc = probe.getContext('2d');
+      pc.fillStyle = color; pc.fillRect(0,0,1,1);
+      var d = pc.getImageData(0,0,1,1).data;
+      var tr = d[0], tg = d[1], tb = d[2];
+      // Luminance-preserving paint blend
+      var id = ctx.getImageData(0, 0, W, H);
+      var px = id.data;
+      for (var i = 0; i < px.length; i += 4) {
+        var lum = 0.299*px[i] + 0.587*px[i+1] + 0.114*px[i+2];
+        var tl  = 0.299*tr    + 0.587*tg       + 0.114*tb;
+        var s   = tl > 5 ? lum / tl : 1;
+        var bl  = 0.52;
+        px[i]   = Math.min(255, Math.round(px[i]  *(1-bl) + (tr*s)*bl));
+        px[i+1] = Math.min(255, Math.round(px[i+1]*(1-bl) + (tg*s)*bl));
+        px[i+2] = Math.min(255, Math.round(px[i+2]*(1-bl) + (tb*s)*bl));
+      }
+      ctx.putImageData(id, 0, 0);
+      ctx.globalCompositeOperation = 'color';
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = 'rgb('+tr+','+tg+','+tb+')';
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      cb(c.toDataURL('image/jpeg', 0.92));
+    } catch(e) {
+      console.error('mockColor error:', e);
+      cb(S.src); // fallback: return original
+    }
+  };
+  img.onerror = function() { cb(S.src); };
+  img.src = S.src;
+}
+
+function mockLivery(prompt, cb) {
+  var MAX = 1400;
+  var img = new Image();
+  img.onload = function() {
+    try {
+      var ratio = Math.min(MAX / img.width, MAX / img.height, 1);
+      var W = Math.round(img.width * ratio);
+      var H = Math.round(img.height * ratio);
+      var c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      var ctx = c.getContext('2d');
+      if (!ctx) { cb(S.src); return; }
+      ctx.drawImage(img, 0, 0, W, H);
+      var h = 200;
+      if (/red|fire|camo/i.test(prompt))        h = 0;
+      else if (/gold|chrome|luxury/i.test(prompt)) h = 45;
+      else if (/green|british|gulf/i.test(prompt)) h = 120;
+      else if (/teal|cyan|arctic/i.test(prompt))   h = 180;
+      else if (/purple|cyber|tokyo|magenta/i.test(prompt)) h = 280;
+      else if (/orange|papaya/i.test(prompt))      h = 30;
+      else if (/blue/i.test(prompt))               h = 210;
+      else h = Math.floor(Math.random() * 360);
+      var h2 = (h + 130) % 360;
+      ctx.globalCompositeOperation = 'overlay';
+      ctx.globalAlpha = 0.68;
+      var grd = ctx.createLinearGradient(0, 0, W, H);
+      grd.addColorStop(0,   'hsl('+h+',90%,28%)');
+      grd.addColorStop(0.5, 'hsl('+h2+',100%,52%)');
+      grd.addColorStop(1,   'hsl('+h+',85%,18%)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'screen';
+      ctx.strokeStyle = 'hsl('+h2+',100%,65%)';
+      ctx.lineWidth = H * 0.03;
+      for (var i = 0; i < 5; i++) {
+        var y = H * (0.15 + i * 0.17);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.bezierCurveTo(W*0.25, y - H*0.04, W*0.75, y + H*0.04, W, y);
+        ctx.globalAlpha = 0.20 - i*0.025;
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      cb(c.toDataURL('image/jpeg', 0.92));
+    } catch(e) {
+      console.error('mockLivery error:', e);
+      cb(S.src);
+    }
+  };
+  img.onerror = function() { cb(S.src); };
+  img.src = S.src;
+}
+
+async function runColor() {
+  var color = document.getElementById('clr-in').value.trim();
+  if (!color) { toast('Pick a colour or type one first', 'err'); return; }
+  if (!S.src)  { toast('Upload a car photo first', 'err'); return; }
+  if (S.gen)   { toast('Already generating...', 'err'); return; }
+
+  setSt('busy', 'Applying paint change...');
+  startProg(['Analysing car body...','Building edge map...','Applying colour...','Preserving livery...','Finishing...']);
+
+  var resultURL = null;
+  try {
+    if (S.cfg.provider === 'fal' && S.cfg.falKey) {
+      toast('Sending to Fal.ai...');
+      var url = await callFalWithProgress('fal-ai/controlnet-sdxl', {
+        image_url: S.src,
+        prompt: 'Professional automotive paint change to ' + color + '. Preserve all existing livery graphics sponsor decals racing numbers window tints reflections. Only bare metal body panels change colour. ControlNet Canny edge locking. Photorealistic studio lighting.',
+        negative_prompt: 'blurry low quality deformed changed livery changed decals removed graphics changed background',
+        controlnet_type: 'canny', controlnet_conditioning_scale: 1.2,
+        strength: 0.45, guidance_scale: 7.5, num_inference_steps: 30,
+        seed: Math.floor(Math.random() * 9999999)
+      }, function(pct, st) { setProg(pct, st); });
+      if (url) resultURL = await url2b64(url);
+    }
+    // Always fall back to mock if no AI result
+    if (!resultURL) {
+      resultURL = await new Promise(function(resolve) {
+        mockColor(color, resolve);
+      });
+    }
+    if (!resultURL) throw new Error('No result generated');
+
+    endProg();
+    S.prevURL = resultURL;
+    showPrev(resultURL);
+    document.getElementById('res-badge').style.display = 'block';
+    document.getElementById('cmp-btn').disabled = false;
+    addGal(resultURL, 'Paint - ' + color, 'color');
+    setSt('ready', mlbl(S.mode));
+    var msg = (S.cfg.provider === 'fal' && S.cfg.falKey)
+      ? 'Paint applied via Fal.ai ✓'
+      : 'Paint applied ✓  (add Fal.ai key in Settings for real AI)';
+    toast(msg, 'ok');
+
+  } catch(e) {
+    console.error('[runColor]', e);
+    endProg();
+    toast('Error: ' + e.message, 'err');
+    setSt('ready', mlbl(S.mode));
+  }
+}
+
+async function runLivery() {
+  var prompt = document.getElementById('liv-prompt').value.trim();
+  if (!prompt) { toast('Describe the livery first', 'err'); return; }
+  if (!S.src)  { toast('Upload a car photo first', 'err'); return; }
+  if (S.gen)   { toast('Already generating...', 'err'); return; }
+
+  setSt('busy', 'Generating livery...');
+  startProg(['Building depth map...','Reading description...','Designing livery...','Applying graphics...','Matching lighting...','Rendering...']);
+
+  var resultURL = null;
+  try {
+    if (S.cfg.provider === 'fal' && S.cfg.falKey) {
+      toast('Sending to Fal.ai...');
+      var url = await callFalWithProgress('fal-ai/controlnet-sdxl', {
+        image_url: S.src,
+        prompt: 'Professional automotive racing livery: ' + prompt + '. Complete photorealistic racing livery across entire car body respecting body panel geometry with specular highlights and environmental reflections. Ultra high detail studio automotive photography 8K.',
+        negative_prompt: 'blurry low quality deformed changed background broken windows wrong wheel design',
+        controlnet_type: 'depth', controlnet_conditioning_scale: 0.85,
+        strength: 0.78, guidance_scale: 8.5, num_inference_steps: 35,
+        seed: Math.floor(Math.random() * 9999999)
+      }, function(pct, st) { setProg(pct, st); });
+      if (url) resultURL = await url2b64(url);
+    }
+    if (!resultURL) {
+      resultURL = await new Promise(function(resolve) {
+        mockLivery(prompt, resolve);
+      });
+    }
+    if (!resultURL) throw new Error('No result generated');
+
+    endProg();
+    S.prevURL = resultURL;
+    showPrev(resultURL);
+    document.getElementById('res-badge').style.display = 'block';
+    document.getElementById('cmp-btn').disabled = false;
+    addGal(resultURL, 'Livery - ' + prompt.slice(0, 22) + '...', 'livery');
+    setSt('ready', mlbl(S.mode));
+    var msg = (S.cfg.provider === 'fal' && S.cfg.falKey)
+      ? 'Livery generated via Fal.ai ✓'
+      : 'Livery generated ✓  (add Fal.ai key in Settings for real AI)';
+    toast(msg, 'ok');
+
+  } catch(e) {
+    console.error('[runLivery]', e);
+    endProg();
+    toast('Error: ' + e.message, 'err');
+    setSt('ready', mlbl(S.mode));
+  }
+}
+
 async function runBake(){if(!S.fc||!S.hasLogos||S.gen)return;var flat=flatC();if(!flat)return;setSt('busy','Baking logo...');startProg(['Extracting mask...','Analysing lighting...','Applying curvature...','Blending highlights...']);try{var resultURL=flat;if(S.cfg.provider==='fal'&&S.cfg.falKey){var url=await callFal('fal-ai/stable-diffusion-xl-v1-0/inpainting',{image_url:flat,mask_url:flat,prompt:'Integrate placed logo naturally into car surface. Apply realistic surface curvature distortion following car body panel geometry match ambient lighting and specular highlights add subtle shadow casting blend edges with existing paint finish. Factory-applied vinyl wrap quality.',negative_prompt:'flat logo no lighting wrong perspective floating decal',strength:0.32,guidance_scale:6.5,num_inference_steps:25,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}endProg();S.prevURL=resultURL;addGal(resultURL,'Logo Baked','logo');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Logo baked via Fal.ai':'Logo baked (add Fal.ai key for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
 function updCB(){var v=document.getElementById('clr-in').value.trim();document.getElementById('clr-btn').className='gen-btn '+(!!S.src&&!!v&&!S.gen?'on':'off');}
 function onClrIn(v){S.selColor=v;if(/^#[0-9A-Fa-f]{3,6}$/.test(v))updCP(v);else document.getElementById('clr-prev').style.display='none';updCB();}

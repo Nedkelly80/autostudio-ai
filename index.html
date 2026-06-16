@@ -4,6 +4,14 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>AutoStudio AI — Automotive Design Studio</title>
+<link rel="canonical" href="https://nedkelly80.github.io/autostudio-ai/"/>
+<link rel="manifest" href="manifest.json"/>
+<meta name="theme-color" content="#0a0a0c"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="description" content="AI-powered automotive livery design. Change paint, generate liveries, place logos."/>
+<link rel="apple-touch-icon" href="assets/icon-192.svg"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
 <style>
@@ -236,6 +244,10 @@ kbd{background:var(--elevated);border:1px solid var(--border);border-radius:4px;
       <button class="tb-btn" id="cmp-btn" onclick="openCmp()" disabled>◧ Compare</button>
       <button class="tb-btn" id="spec-btn" onclick="exportSpec()" disabled>📄 Spec Sheet</button>
       <div style="flex:1"></div>
+      
+      <div style="width:1px;height:16px;background:var(--border);margin:0 4px"></div>
+      <button class="tb-btn" onclick="shareResult()" id="share-btn" style="display:none">↗ Share</button>
+      <button class="tb-btn" onclick="installApp()" id="install-btn" style="display:none">⬇ Install App</button>
       <button class="tb-btn" onclick="openKbd()">? Shortcuts</button>
       <button class="tb-btn" onclick="openCfg()">⚙ Settings</button>
     </div>
@@ -417,7 +429,7 @@ function onClrIn(v){S.selColor=v;if(/^#[0-9A-Fa-f]{3,6}$/.test(v))updCP(v);else 
 function updCP(hex){var e=document.getElementById('clr-prev');e.style.background=hex;e.style.display='block';}
 function updLB(){document.getElementById('liv-btn').className='gen-btn '+(!!S.src&&!!document.getElementById('liv-prompt').value.trim()&&!S.gen?'on':'off');}
 function updBB(){document.getElementById('bake-btn').className='gen-btn '+(!!S.src&&S.hasLogos&&!S.gen?'on':'off');}
-function addGal(url,label,mode){var id='g'+Date.now();S.gal.unshift({id,url,label,mode});document.getElementById('gallery').style.display='block';document.getElementById('spec-btn').disabled=false;var grid=document.getElementById('gal-grid');var item=document.createElement('div');item.className='gi active';item.id=id;item.innerHTML='<img src="'+url+'" alt="'+label+'"/><div class="gi-foot"><span class="gi-mode '+mode+'">'+mode.charAt(0).toUpperCase()+mode.slice(1)+'</span><div class="gi-lbl" title="'+label+'">'+label+'</div></div><div class="gi-acts"><button class="ga dl" onclick="dlGal(\''+id+'\')">⬇</button><button class="ga rm" onclick="rmGal(\''+id+'\')">✕</button></div>';item.querySelector('img').onclick=function(){loadGal(id);};document.querySelectorAll('.gi').forEach(function(x){x.classList.remove('active');});grid.insertBefore(item,grid.firstChild);updGT();}
+function addGal(url,label,mode){var id='g'+Date.now();S.gal.unshift({id,url,label,mode});document.getElementById('gallery').style.display='block';document.getElementById('spec-btn').disabled=false;document.getElementById('share-btn').style.display='flex';var grid=document.getElementById('gal-grid');var item=document.createElement('div');item.className='gi active';item.id=id;item.innerHTML='<img src="'+url+'" alt="'+label+'"/><div class="gi-foot"><span class="gi-mode '+mode+'">'+mode.charAt(0).toUpperCase()+mode.slice(1)+'</span><div class="gi-lbl" title="'+label+'">'+label+'</div></div><div class="gi-acts"><button class="ga dl" onclick="dlGal(\''+id+'\')">⬇</button><button class="ga rm" onclick="rmGal(\''+id+'\')">✕</button></div>';item.querySelector('img').onclick=function(){loadGal(id);};document.querySelectorAll('.gi').forEach(function(x){x.classList.remove('active');});grid.insertBefore(item,grid.firstChild);updGT();}
 function loadGal(id){var item=S.gal.find(function(g){return g.id===id;});if(!item)return;S.prevURL=item.url;showPrev(item.url);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=!S.src;document.querySelectorAll('.gi').forEach(function(x){x.classList.toggle('active',x.id===id);});}
 function dlGal(id){var item=S.gal.find(function(g){return g.id===id;});if(!item)return;var a=document.createElement('a');a.href=item.url;a.download='autostudio-'+item.mode+'-'+Date.now()+'.jpg';a.click();toast('Downloading');}
 function rmGal(id){S.gal=S.gal.filter(function(g){return g.id!==id;});var el=document.getElementById(id);if(el)el.remove();if(!S.gal.length){document.getElementById('gallery').style.display='none';document.getElementById('spec-btn').disabled=true;}updGT();}
@@ -436,7 +448,66 @@ function selProv(p,silent){S.cfg.provider=p;document.querySelectorAll('.cfg-prov
 function saveCfg(){S.cfg.falKey=document.getElementById('fal-key').value.trim();localStorage.setItem('as-cfg',JSON.stringify(S.cfg));closeCfg();toast('Settings saved','ok');}
 async function testKey(){var k=document.getElementById('fal-key').value.trim();if(!k){toast('Enter a key first','err');return;}toast('Testing key...');try{var res=await fetch('https://fal.run/fal-ai/fast-sdxl',{method:'POST',headers:{'Authorization':'Key '+k,'Content-Type':'application/json'},body:JSON.stringify({prompt:'test',num_inference_steps:1,image_size:{width:64,height:64}})});toast(res.status!==401?'Fal.ai key is valid!':'Invalid key - check fal.ai',res.status!==401?'ok':'err');}catch(e){toast('Network error testing key','err');}}
 function exportSpec(){if(!S.gal.length)return;var date=new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'});var items=S.gal.slice(0,12);var html='<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>AutoStudio AI Spec Sheet</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:system-ui,sans-serif;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}.hdr{background:#0a0a0c;color:#fff;padding:24px 32px;display:flex;align-items:center;justify-content:space-between;}.logo{font-size:16px;font-weight:800;}.lo span{color:#39ff6a;}.src{display:flex;gap:20px;padding:20px 32px;border-bottom:1px solid #e5e7eb;}.src img{width:180px;height:120px;object-fit:cover;border-radius:8px;flex-shrink:0;}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:20px 32px;}.card{border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;}.card img{width:100%;height:110px;object-fit:cover;display:block;}.cf{padding:8px 10px;}.cm{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;}.cl{font-size:11px;font-weight:600;color:#111;margin-top:2px;}.ftr{background:#0a0a0c;padding:12px 32px;display:flex;justify-content:space-between;margin-top:8px;}.ftr p{font-size:10px;color:#555;}.ftr .ac{color:#39ff6a;}</style></head><body><div class="hdr"><div class="logo">Auto<span>Studio</span> AI</div><div><h1 style="font-size:18px;font-weight:700;color:#fff">Livery Design Spec Sheet</h1><p style="font-size:11px;color:#888;margin-top:2px">'+date+'</p></div></div>'+(S.src?'<div class="src"><img src="'+S.src+'" alt="Source"/><div><h2 style="font-size:13px;font-weight:700;margin-bottom:6px">Source Vehicle</h2><p style="font-size:11px;color:#6b7280;line-height:1.6">Original reference image. All AI variations preserve the vehicle geometry and background via ControlNet-guided Stable Diffusion.</p></div></div>':'')+
-'<div class="grid">'+items.map(function(item){return '<div class="card"><img src="'+item.url+'" alt="'+item.label+'"/><div class="cf"><div class="cm">'+item.mode+'</div><div class="cl">'+item.label+'</div></div></div>';}).join('')+'</div><div class="ftr"><p>Generated by <span class="ac">AutoStudio AI</span></p><p>'+date+'</p></div></body></html>';
+'<div class="grid">'+items.map(function(item){return '<div class="card"><img src="'+item.url+'" alt="'+item.label+'"/><div class="cf"><div class="cm">'+item.mode+'</div><div class="cl">'+item.label+'</div></div></div>';}).join('')+'</div><div class="ftr"><p>Generated by <span class="ac">AutoStudio AI</span></p><p>'+date+'</p></div>
+<script>
+// PWA Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/autostudio-ai/sw.js')
+      .then(r => console.log('[AutoStudio] SW registered:', r.scope))
+      .catch(e => console.log('[AutoStudio] SW failed:', e));
+  });
+}
+
+// Install prompt
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // Show install button if it exists
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = 'flex';
+});
+
+// History persistence - save gallery to localStorage
+const _origAddGal = window.addGal;
+function addGal(url, label, mode) {
+  _origAddGal && _origAddGal(url, label, mode);
+  // Persist to localStorage (skip large base64 images - just save labels/timestamps)
+  try {
+    const history = JSON.parse(localStorage.getItem('as-history') || '[]');
+    history.unshift({ label, mode, ts: Date.now() });
+    localStorage.setItem('as-history', JSON.stringify(history.slice(0, 50)));
+  } catch(e) {}
+}
+
+// Share button functionality  
+function shareResult() {
+  if (!S.prevURL) return;
+  if (navigator.share) {
+    navigator.share({
+      title: 'AutoStudio AI — Livery Design',
+      text: 'Check out this AI-generated automotive livery',
+      url: window.location.href
+    }).catch(e => console.log('Share cancelled'));
+  } else {
+    navigator.clipboard.writeText(window.location.href).then(() => toast('Link copied to clipboard', 'ok'));
+  }
+}
+
+// PWA install
+function installApp() {
+  if (!deferredPrompt) { toast('Already installed or not supported', 'err'); return; }
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(choice => {
+    if (choice.outcome === 'accepted') toast('Installing AutoStudio AI...', 'ok');
+    deferredPrompt = null;
+    const btn = document.getElementById('install-btn');
+    if (btn) btn.style.display = 'none';
+  });
+}
+</script>
+</body></html>';
 var w=window.open('','_blank');w.document.write(html);w.document.close();setTimeout(function(){w.focus();w.print();},600);toast('Spec sheet opened - Save as PDF','ok');}
 function resetToSrc(){if(!S.src)return;S.prevURL=S.src;showPrev(S.src);document.getElementById('res-badge').style.display='none';if(S.mode==='logo')initFabric(S.src);toast('Reset to source');}
 function doExport(){var url=S.mode==='logo'?flatC():S.prevURL;if(!url)return;var a=document.createElement('a');a.href=url;a.download='autostudio-export-'+Date.now()+'.jpg';a.click();toast('Exported');}

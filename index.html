@@ -186,6 +186,35 @@ kbd{background:var(--elevated);border:1px solid var(--border);border-radius:4px;
 .cfg-foot{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;}
 .cfg-cancel{flex:1;padding:9px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;}
 .cfg-save{flex:1;padding:9px;border-radius:10px;background:var(--accent);border:none;color:#000;font-size:12px;font-weight:700;cursor:pointer;}
+
+@media (max-width: 768px) {
+  #app { flex-direction: column; }
+  #sidebar { width: 100%; min-width: unset; max-height: 42vh; overflow-y: auto; border-right: none; border-bottom: 1px solid var(--border); flex-direction: row; flex-wrap: wrap; }
+  .sb-hdr { padding: 10px 12px 4px; width: 100%; }
+  .sb-sub { display: none; }
+  .upload-zone, .thumb { margin: 0 8px 8px; }
+  .tabs { display: flex; flex-direction: row; padding: 0 8px 8px; gap: 4px; width: 100%; overflow-x: auto; }
+  .tab { flex-shrink: 0; padding: 6px 10px; font-size: 10px; }
+  .panel { width: 100%; }
+  .sb-footer { display: none; }
+  #main { flex: 1; min-height: 0; }
+  .toolbar { padding: 6px 10px; overflow-x: auto; }
+  .topbar { padding: 7px 10px; }
+  .topbar-status { font-size: 10px; }
+  .preset-grid { grid-template-columns: repeat(4, 1fr); }
+  #canvas-area { min-height: 200px; }
+  #gallery { padding: 8px 10px; }
+  .gi { width: 90px; }
+  .gi img { height: 54px; }
+  .cmp-wrap { max-width: 100%; }
+  .cfg-box, .kbd-box { width: calc(100vw - 32px); max-height: 90vh; }
+}
+@media (max-width: 480px) {
+  .nav-links { display: none; }
+  .preset-grid { grid-template-columns: repeat(2, 1fr); }
+  .topbar-right .ic-btn:not(#exp-btn) { display: none; }
+}
+
 </style>
 
 </head>
@@ -223,6 +252,10 @@ kbd{background:var(--elevated);border:1px solid var(--border);border-radius:4px;
       <div class="sep"></div>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Quick Presets</div>
       <div class="preset-grid" id="preset-grid"></div>
+      
+      <div class="sep"></div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">🏁 TRM / Junior Sedan</div>
+      <div class="preset-grid" id="trm-preset-grid"></div>
       <div class="hint">AI replaces the entire livery via ControlNet Depth — body shape preserved.</div>
       <button class="gen-btn off" id="liv-btn" onclick="runLivery()">Generate Livery</button>
     </div>
@@ -321,13 +354,35 @@ try{var sc=JSON.parse(localStorage.getItem('as-cfg')||'{}');if(sc.provider)S.cfg
 var CG={'Classic':[{h:'#1a1a1a',n:'Carbon Black'},{h:'#f5f5f0',n:'Pearl White'},{h:'#c0392b',n:'Racing Red'},{h:'#2c3e50',n:'Midnight Navy'},{h:'#27ae60',n:'British Racing'},{h:'#e67e22',n:'Burnt Orange'}],'Sport':[{h:'#e74c3c',n:'Ferrari Rosso'},{h:'#f39c12',n:'McLaren Papaya'},{h:'#2980b9',n:'Gulf Blue'},{h:'#8e44ad',n:'Lamborghini Viola'},{h:'#16a085',n:'Teal Racing'},{h:'#f1c40f',n:'Renault Yellow'}],'Metallic':[{h:'#bdc3c7',n:'Titanium Silver'},{h:'#95a5a6',n:'Gunmetal'},{h:'#c0a000',n:'Champagne Gold'},{h:'#7f8c8d',n:'Graphite'},{h:'#85929e',n:'Stealth Grey'},{h:'#a04000',n:'Bronze Copper'}],'Special':[{h:'#39ff6a',n:'Neon Green'},{h:'#ff073a',n:'Neon Red'},{h:'#00d4ff',n:'Electric Blue'},{h:'#ff6600',n:'Neon Orange'},{h:'#ff00ff',n:'Electric Magenta'},{h:'#fff700',n:'Safety Yellow'}]};
 var PP=[{i:'⚡',l:'Cyberpunk Neon',p:'Cyberpunk neon racing livery with glowing electric blue and magenta circuit board traces dark carbon fibre base sharp geometric lines holographic accent stripes futuristic ultra high detail'},{i:'🎯',l:'Aggressive Camo',p:'Aggressive military-inspired camo racing livery in deep red and matte black with sharp angular patterns high contrast motorsport design dramatic shadows'},{i:'🏁',l:'Gulf Racing',p:'Classic Gulf Oil racing livery in iconic light blue and orange clean retro stripes vintage motorsport 1970s Le Mans inspired photorealistic'},{i:'🏆',l:'Martini Stripes',p:'Classic Martini Racing livery with iconic red blue and green diagonal stripes on white base vintage Porsche Carrera era inspired pristine photorealistic'},{i:'🔥',l:'Carbon Fire',p:'Exposed carbon fibre weave with subtle orange-to-red flame gradient at the front matte and gloss dual finish high performance motorsport'},{i:'🌸',l:'Tokyo Drift',p:'Japanese street racing livery inspired by Tokyo nights cherry blossom sakura on matte black base deep purple-to-pink gradient hood underground racing culture'},{i:'✨',l:'Chrome Gold',p:'Luxury chrome mirrored finish with 24 karat gold accent stripes ultra premium automotive show car aesthetic specular reflections'},{i:'❄️',l:'Arctic Camo',p:'Arctic winter camouflage in white ice blue and pale grey geometric snowflake pattern accents winter rally car inspired clean crisp motorsport'}];
 
+
+// TRM Racing / Junior Sedan presets
+var TRM_PRESETS = [
+  {i:'🏁',l:'TRM Black & Blue',p:'Professional motorsport livery in matte carbon black with electric blue TRM Racing accent stripes, sharp angular side blade graphics, metallic blue number panels, aggressive speedway racing aesthetic, photorealistic studio automotive photography'},
+  {i:'🔴',l:'NextGen Champion',p:'NextGen National Championship inspired livery in deep red and gold with sharp diagonal speed lines, champion gold number plates, official speedway racing aesthetic, clean professional motorsport design photorealistic'},
+  {i:'🌿',l:'NT Territory Green',p:'Northern Territory inspired racing livery in outback ochre and dark green with indigenous dot art accent pattern subtle on hood, red dirt speedway aesthetic, earthy Australian motorsport design photorealistic'},
+  {i:'⚡',l:'TRM Neon Circuit',p:'TRM Racing electronics brand livery in gloss black with neon green circuit board trace accent lines matching ECU diagnostic aesthetic, electric green glow effects on body panels, professional automotive photorealistic'},
+  {i:'🏆',l:'Northline Speedway',p:'Speedway racing livery in blue and white inspired by Northline Speedway Darwin colours with bold number 43 graphic, Northern Territory racing club aesthetic, clean professional motorsport photorealistic'},
+  {i:'🔥',l:'CE Mirage Attack',p:'Aggressive CE Mirage Junior Sedan livery in burnt orange and black with sharp flame-style body graphics, aggressive front splitter accent lines, street-to-track motorsport aesthetic photorealistic'},
+];
+
 function init(){
+
   buildSw();buildPresets();
   var uz=document.getElementById('uz');
   uz.ondragover=function(e){e.preventDefault();uz.classList.add('drag');};
   uz.ondragleave=function(){uz.classList.remove('drag');};
   uz.ondrop=function(e){e.preventDefault();uz.classList.remove('drag');var f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))loadFile(f);};
   document.getElementById('car-in').onchange=function(e){if(e.target.files[0])loadFile(e.target.files[0]);};
+
+  // Build TRM presets
+  var tg = document.getElementById('trm-preset-grid');
+  if (tg) TRM_PRESETS.forEach(function(p){
+    var b = document.createElement('button'); b.className = 'preset-btn'; b.title = p.p.slice(0,80);
+    b.innerHTML = p.i + ' <span class="p-lbl">' + p.l + '</span>';
+    b.onclick = function(){ document.querySelectorAll('.preset-btn').forEach(function(x){x.classList.remove('sel');}); b.classList.add('sel'); document.getElementById('liv-prompt').value = p.p; updLB(); };
+    tg.appendChild(b);
+  });
+
   selProv(S.cfg.provider,true);
   if(S.cfg.falKey)document.getElementById('fal-key').value=S.cfg.falKey;
 }
@@ -421,8 +476,8 @@ async function callFal(ep,payload){var res=await fetch('https://fal.run/'+ep,{me
 async function url2b64(url){var res=await fetch(url);var blob=await res.blob();return new Promise(function(resolve){var r=new FileReader();r.onload=function(e){resolve(e.target.result);};r.readAsDataURL(blob);});}
 function mockColor(color,cb){var c=document.createElement('canvas');var img=new Image();img.onload=function(){c.width=img.width;c.height=img.height;var ctx=c.getContext('2d');ctx.drawImage(img,0,0);var probe=document.createElement('canvas');probe.width=1;probe.height=1;var pc=probe.getContext('2d');pc.fillStyle=color;pc.fillRect(0,0,1,1);var d=pc.getImageData(0,0,1,1).data;var id=ctx.getImageData(0,0,c.width,c.height);var px=id.data;for(var i=0;i<px.length;i+=4){var l=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];var tl=0.299*d[0]+0.587*d[1]+0.114*d[2];var s=tl>0?l/tl:1;var bl=0.5;px[i]=Math.min(255,Math.round(px[i]*(1-bl)+(d[0]*s)*bl));px[i+1]=Math.min(255,Math.round(px[i+1]*(1-bl)+(d[1]*s)*bl));px[i+2]=Math.min(255,Math.round(px[i+2]*(1-bl)+(d[2]*s)*bl));}ctx.putImageData(id,0,0);ctx.globalCompositeOperation='color';ctx.globalAlpha=0.45;ctx.fillStyle='rgb('+d[0]+','+d[1]+','+d[2]+')';ctx.fillRect(0,0,c.width,c.height);ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;cb(c.toDataURL('image/jpeg',.92));};img.src=S.src;}
 function mockLivery(prompt,cb){var c=document.createElement('canvas');var img=new Image();img.onload=function(){c.width=img.width;c.height=img.height;var ctx=c.getContext('2d');ctx.drawImage(img,0,0);var h=200;if(/red|fire|camo/i.test(prompt))h=0;else if(/gold|chrome/i.test(prompt))h=45;else if(/green|british|gulf/i.test(prompt))h=120;else if(/teal|cyan|arctic/i.test(prompt))h=180;else if(/purple|cyberpunk|tokyo|magenta/i.test(prompt))h=280;else if(/orange|papaya/i.test(prompt))h=30;else h=Math.floor(Math.random()*360);var h2=(h+130)%360;ctx.globalCompositeOperation='overlay';ctx.globalAlpha=0.7;var grd=ctx.createLinearGradient(0,0,c.width,c.height);grd.addColorStop(0,'hsl('+h+',90%,30%)');grd.addColorStop(.5,'hsl('+h2+',100%,50%)');grd.addColorStop(1,'hsl('+h+',90%,20%)');ctx.fillStyle=grd;ctx.fillRect(0,0,c.width,c.height);ctx.globalCompositeOperation='screen';ctx.strokeStyle='hsl('+h2+',100%,70%)';ctx.lineWidth=c.height*.035;for(var i=0;i<5;i++){ctx.beginPath();var y=c.height*(.15+i*.18);ctx.moveTo(0,y);ctx.bezierCurveTo(c.width*.25,y-c.height*.04,c.width*.75,y+c.height*.04,c.width,y);ctx.globalAlpha=0.22-i*0.03;ctx.stroke();ctx.globalAlpha=1;}ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;cb(c.toDataURL('image/jpeg',.92));};img.src=S.src;}
-async function runColor(){var color=document.getElementById('clr-in').value.trim();if(!color){toast('Enter a colour','err');return;}if(!S.src||S.gen)return;setSt('busy','Applying paint change...');startProg(['Analysing car body...','Building Canny edge map...','Applying colour...','Preserving livery...','Adjusting reflections...']);try{var resultURL=null;if(S.cfg.provider==='fal'&&S.cfg.falKey){toast('Sending to Fal.ai...');var url=await callFal('fal-ai/controlnet-sdxl',{image_url:S.src,prompt:'Professional automotive paint change to '+color+'. Preserve all existing livery graphics sponsor decals racing numbers window tints reflections. Only bare metal body panels change colour. ControlNet Canny edge locking. Photorealistic studio lighting.',negative_prompt:'blurry low quality deformed changed livery changed decals removed graphics changed background',controlnet_type:'canny',controlnet_conditioning_scale:1.2,strength:0.45,guidance_scale:7.5,num_inference_steps:30,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}if(!resultURL)await new Promise(function(r){mockColor(color,function(d){resultURL=d;r();});});endProg();S.prevURL=resultURL;showPrev(resultURL);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=false;addGal(resultURL,'Paint - '+color,'color');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Paint applied via Fal.ai':'Paint applied (add Fal.ai key in Settings for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
-async function runLivery(){var prompt=document.getElementById('liv-prompt').value.trim();if(!prompt){toast('Describe the livery','err');return;}if(!S.src||S.gen)return;setSt('busy','Generating livery...');startProg(['Building depth map...','Parsing description...','Designing livery...','Applying graphics...','Matching lighting...','Rendering...']);try{var resultURL=null;if(S.cfg.provider==='fal'&&S.cfg.falKey){toast('Sending to Fal.ai...');var url=await callFal('fal-ai/controlnet-sdxl',{image_url:S.src,prompt:'Professional automotive racing livery: '+prompt+'. Complete photorealistic racing livery across entire car body respecting body panel geometry with specular highlights and environmental reflections. Ultra high detail studio automotive photography 8K.',negative_prompt:'blurry low quality deformed changed background broken windows wrong wheel design',controlnet_type:'depth',controlnet_conditioning_scale:0.85,strength:0.78,guidance_scale:8.5,num_inference_steps:35,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}if(!resultURL)await new Promise(function(r){mockLivery(prompt,function(d){resultURL=d;r();});});endProg();S.prevURL=resultURL;showPrev(resultURL);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=false;addGal(resultURL,'Livery - '+prompt.slice(0,22)+'...','livery');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Livery generated via Fal.ai':'Livery generated (add Fal.ai key for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
+async function runColor(){var color=document.getElementById('clr-in').value.trim();if(!color){toast('Enter a colour','err');return;}if(!S.src||S.gen)return;setSt('busy','Applying paint change...');startProg(['Analysing car body...','Building Canny edge map...','Applying colour...','Preserving livery...','Adjusting reflections...']);try{var resultURL=null;if(S.cfg.provider==='fal'&&S.cfg.falKey){toast('Sending to Fal.ai...');var url=await callFalWithProgress('fal-ai/controlnet-sdxl',{image_url:S.src,prompt:'Professional automotive paint change to '+color+'. Preserve all existing livery graphics sponsor decals racing numbers window tints reflections. Only bare metal body panels change colour. ControlNet Canny edge locking. Photorealistic studio lighting.',negative_prompt:'blurry low quality deformed changed livery changed decals removed graphics changed background',controlnet_type:'canny',controlnet_conditioning_scale:1.2,strength:0.45,guidance_scale:7.5,num_inference_steps:30,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}if(!resultURL)await new Promise(function(r){mockColor(color,function(d){resultURL=d;r();});});endProg();S.prevURL=resultURL;showPrev(resultURL);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=false;addGal(resultURL,'Paint - '+color,'color');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Paint applied via Fal.ai':'Paint applied (add Fal.ai key in Settings for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
+async function runLivery(){var prompt=document.getElementById('liv-prompt').value.trim();if(!prompt){toast('Describe the livery','err');return;}if(!S.src||S.gen)return;setSt('busy','Generating livery...');startProg(['Building depth map...','Parsing description...','Designing livery...','Applying graphics...','Matching lighting...','Rendering...']);try{var resultURL=null;if(S.cfg.provider==='fal'&&S.cfg.falKey){toast('Sending to Fal.ai...');var url=await callFalWithProgress('fal-ai/controlnet-sdxl',{image_url:S.src,prompt:'Professional automotive racing livery: '+prompt+'. Complete photorealistic racing livery across entire car body respecting body panel geometry with specular highlights and environmental reflections. Ultra high detail studio automotive photography 8K.',negative_prompt:'blurry low quality deformed changed background broken windows wrong wheel design',controlnet_type:'depth',controlnet_conditioning_scale:0.85,strength:0.78,guidance_scale:8.5,num_inference_steps:35,seed:Math.floor(Math.random()*9999999)}, function(pct,st){setProg(pct,st);});if(url)resultURL=await url2b64(url);}if(!resultURL)await new Promise(function(r){mockLivery(prompt,function(d){resultURL=d;r();});});endProg();S.prevURL=resultURL;showPrev(resultURL);document.getElementById('res-badge').style.display='block';document.getElementById('cmp-btn').disabled=false;addGal(resultURL,'Livery - '+prompt.slice(0,22)+'...','livery');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Livery generated via Fal.ai':'Livery generated (add Fal.ai key for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
 async function runBake(){if(!S.fc||!S.hasLogos||S.gen)return;var flat=flatC();if(!flat)return;setSt('busy','Baking logo...');startProg(['Extracting mask...','Analysing lighting...','Applying curvature...','Blending highlights...']);try{var resultURL=flat;if(S.cfg.provider==='fal'&&S.cfg.falKey){var url=await callFal('fal-ai/stable-diffusion-xl-v1-0/inpainting',{image_url:flat,mask_url:flat,prompt:'Integrate placed logo naturally into car surface. Apply realistic surface curvature distortion following car body panel geometry match ambient lighting and specular highlights add subtle shadow casting blend edges with existing paint finish. Factory-applied vinyl wrap quality.',negative_prompt:'flat logo no lighting wrong perspective floating decal',strength:0.32,guidance_scale:6.5,num_inference_steps:25,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}endProg();S.prevURL=resultURL;addGal(resultURL,'Logo Baked','logo');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Logo baked via Fal.ai':'Logo baked (add Fal.ai key for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
 function updCB(){var v=document.getElementById('clr-in').value.trim();document.getElementById('clr-btn').className='gen-btn '+(!!S.src&&!!v&&!S.gen?'on':'off');}
 function onClrIn(v){S.selColor=v;if(/^#[0-9A-Fa-f]{3,6}$/.test(v))updCP(v);else document.getElementById('clr-prev').style.display='none';updCB();}

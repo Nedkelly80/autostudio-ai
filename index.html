@@ -383,6 +383,8 @@ function init(){
     tg.appendChild(b);
   });
 
+  // If a key is already stored, make sure Fal is the active provider
+  if(S.cfg.falKey && S.cfg.provider!=='fal'){ S.cfg.provider='fal'; localStorage.setItem('as-cfg',JSON.stringify(S.cfg)); }
   selProv(S.cfg.provider,true);
   if(S.cfg.falKey)document.getElementById('fal-key').value=S.cfg.falKey;
 }
@@ -511,6 +513,61 @@ function endProg(){S.gen=false;clearTimeout(S.progTimer);setProg(100,'Complete')
 function setProg(pct,st){document.getElementById('prog-fill').style.width=Math.round(pct)+'%';document.getElementById('prog-pct').textContent=Math.round(pct)+'%';if(st){document.getElementById('prog-st').textContent=st;document.getElementById('ov-txt').textContent=st;}}
 function setSt(type,txt){var d=document.getElementById('st-dot');d.className='st-dot'+(type==='ready'?' ready':type==='busy'?' busy':'');document.getElementById('st-txt').textContent=txt;}
 async function callFal(ep,payload){var res=await fetch('https://fal.run/'+ep,{method:'POST',headers:{'Authorization':'Key '+S.cfg.falKey,'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)throw new Error('Fal.ai '+res.status);var d=await res.json();return d.images&&d.images[0]?d.images[0].url:null;}
+// ─── Fal.ai queue call with polling + progress + LOUD errors ─────
+async function callFalWithProgress(ep, payload, onProgress) {
+  var key = S.cfg.falKey;
+  if (!key) throw new Error('No Fal.ai key set');
+
+  // 1. Submit to the queue
+  var submit = await fetch('https://queue.fal.run/' + ep, {
+    method: 'POST',
+    headers: { 'Authorization': 'Key ' + key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!submit.ok) {
+    var errTxt = await submit.text().catch(function(){ return ''; });
+    throw new Error('Fal submit ' + submit.status + ' (' + ep + ') ' + errTxt.slice(0,120));
+  }
+  var sub = await submit.json();
+  var reqId = sub.request_id;
+  var statusUrl = sub.status_url || ('https://queue.fal.run/' + ep + '/requests/' + reqId + '/status');
+  var respUrl   = sub.response_url || ('https://queue.fal.run/' + ep + '/requests/' + reqId);
+
+  // 2. Poll until COMPLETED
+  var attempts = 0;
+  while (attempts < 90) {
+    await new Promise(function(r){ setTimeout(r, 1500); });
+    var st = await fetch(statusUrl, { headers: { 'Authorization': 'Key ' + key } });
+    if (!st.ok) { attempts++; continue; }
+    var sd = await st.json();
+    if (sd.status === 'COMPLETED') {
+      var rr = await fetch(respUrl, { headers: { 'Authorization': 'Key ' + key } });
+      if (!rr.ok) throw new Error('Fal result fetch ' + rr.status);
+      return await rr.json();
+    }
+    if (sd.status === 'FAILED' || sd.status === 'ERROR') {
+      throw new Error('Fal generation failed: ' + JSON.stringify(sd).slice(0,150));
+    }
+    var qp = sd.queue_position;
+    var pct = (qp && qp > 0) ? Math.max(12, 40 - qp*4) : 55 + attempts*2;
+    if (onProgress) onProgress(Math.min(pct, 90), qp > 0 ? ('Queue position ' + qp + '...') : 'Generating...');
+    attempts++;
+  }
+  throw new Error('Fal generation timed out');
+}
+
+// Extract an image URL from any Fal response shape
+function falImageUrl(d) {
+  if (!d) return null;
+  if (d.images && d.images[0]) return d.images[0].url || d.images[0];
+  if (d.image && d.image.url) return d.image.url;
+  if (d.image && typeof d.image === 'string') return d.image;
+  if (d.mask && d.mask.url) return d.mask.url;
+  if (d.output && d.output.url) return d.output.url;
+  if (typeof d.url === 'string') return d.url;
+  return null;
+}
+
 async function url2b64(url){var res=await fetch(url);var blob=await res.blob();return new Promise(function(resolve){var r=new FileReader();r.onload=function(e){resolve(e.target.result);};r.readAsDataURL(blob);});}
 // ─── RGB / HSL helpers ───────────────────────────────────────────
 function rgbToHsl(r, g, b) {
@@ -694,28 +751,38 @@ async function runColor() {
   if (!S.src)  { toast('Upload a car photo first', 'err'); return; }
   if (S.gen)   { toast('Already generating...', 'err'); return; }
 
+  var hasKey = S.cfg.provider === 'fal' && S.cfg.falKey;
   setSt('busy', 'Applying paint change...');
-  startProg(['Analysing car body...','Building edge map...','Applying colour...','Preserving livery...','Finishing...']);
+  startProg(hasKey
+    ? ['Uploading photo...','Detecting the car...','Building mask...','Repainting car only...','Finishing...']
+    : ['Analysing car body...','Applying colour...','Finishing...']);
 
   var resultURL = null;
   try {
-    if (S.cfg.provider === 'fal' && S.cfg.falKey) {
-      toast('Sending to Fal.ai...');
-      var url = await callFalWithProgress('fal-ai/controlnet-sdxl', {
-        image_url: S.src,
-        prompt: 'Professional automotive paint change to ' + color + '. Preserve all existing livery graphics sponsor decals racing numbers window tints reflections. Only bare metal body panels change colour. ControlNet Canny edge locking. Photorealistic studio lighting.',
-        negative_prompt: 'blurry low quality deformed changed livery changed decals removed graphics changed background',
-        controlnet_type: 'canny', controlnet_conditioning_scale: 1.2,
-        strength: 0.45, guidance_scale: 7.5, num_inference_steps: 30,
+    if (hasKey) {
+      // 1. Upload source so Fal can fetch it
+      setProg(8, 'Uploading photo...');
+      var imgUrl = await falUpload(S.src);
+      // 2. Segment the car to get a mask
+      var maskUrl = await segmentCar(imgUrl, function(pct, st){ setProg(pct, st); });
+      // 3. Inpaint ONLY the masked car region — background untouched
+      setProg(45, 'Repainting car only...');
+      var outUrl = await callFalWithProgress('fal-ai/sdxl-controlnet-union/inpainting', {
+        image_url: imgUrl,
+        mask_url: maskUrl,
+        prompt: 'a race car with glossy ' + color + ' paint, professional automotive photography, photorealistic, high detail, studio quality reflections, metallic clear-coat finish',
+        negative_prompt: 'blurry, low quality, deformed, distorted body panels, changed background, changed wheels, matte, dull, washed out',
+        strength: 0.92,
+        guidance_scale: 7.5,
+        num_inference_steps: 30,
         seed: Math.floor(Math.random() * 9999999)
-      }, function(pct, st) { setProg(pct, st); });
-      if (url) resultURL = await url2b64(url);
+      }, function(pct, st){ setProg(45 + pct*0.5, st || 'Repainting car only...'); });
+      var imgOut = falImageUrl(outUrl);
+      if (imgOut) resultURL = await url2b64(imgOut);
     }
-    // Always fall back to mock if no AI result
     if (!resultURL) {
-      resultURL = await new Promise(function(resolve) {
-        mockColor(color, resolve);
-      });
+      if (hasKey) toast('Fal.ai returned nothing — using preview mode', 'err');
+      resultURL = await new Promise(function(resolve){ mockColor(color, resolve); });
     }
     if (!resultURL) throw new Error('No result generated');
 
@@ -726,15 +793,17 @@ async function runColor() {
     document.getElementById('cmp-btn').disabled = false;
     addGal(resultURL, 'Paint - ' + color, 'color');
     setSt('ready', mlbl(S.mode));
-    var msg = (S.cfg.provider === 'fal' && S.cfg.falKey)
-      ? 'Paint applied via Fal.ai ✓'
-      : 'Paint applied ✓  (add Fal.ai key in Settings for real AI)';
-    toast(msg, 'ok');
+    toast(hasKey ? 'Car repainted ' + color + ' ✓ (background preserved)' : 'Paint applied ✓ (add Fal.ai key for real AI)', 'ok');
 
   } catch(e) {
     console.error('[runColor]', e);
     endProg();
-    toast('Error: ' + e.message, 'err');
+    // Fal failed — fall back to preview but SAY SO
+    try {
+      var fb = await new Promise(function(resolve){ mockColor(color, resolve); });
+      if (fb) { S.prevURL = fb; showPrev(fb); document.getElementById('res-badge').style.display='block'; document.getElementById('cmp-btn').disabled=false; addGal(fb, 'Paint - ' + color + ' (preview)', 'color'); }
+    } catch(_) {}
+    toast('Fal.ai error: ' + e.message.slice(0,80) + ' — showing preview', 'err');
     setSt('ready', mlbl(S.mode));
   }
 }
@@ -745,27 +814,35 @@ async function runLivery() {
   if (!S.src)  { toast('Upload a car photo first', 'err'); return; }
   if (S.gen)   { toast('Already generating...', 'err'); return; }
 
+  var hasKey = S.cfg.provider === 'fal' && S.cfg.falKey;
   setSt('busy', 'Generating livery...');
-  startProg(['Building depth map...','Reading description...','Designing livery...','Applying graphics...','Matching lighting...','Rendering...']);
+  startProg(hasKey
+    ? ['Uploading photo...','Detecting the car...','Building mask...','Applying new livery...','Rendering detail...']
+    : ['Building depth map...','Designing livery...','Rendering...']);
 
   var resultURL = null;
   try {
-    if (S.cfg.provider === 'fal' && S.cfg.falKey) {
-      toast('Sending to Fal.ai...');
-      var url = await callFalWithProgress('fal-ai/controlnet-sdxl', {
-        image_url: S.src,
-        prompt: 'Professional automotive racing livery: ' + prompt + '. Complete photorealistic racing livery across entire car body respecting body panel geometry with specular highlights and environmental reflections. Ultra high detail studio automotive photography 8K.',
-        negative_prompt: 'blurry low quality deformed changed background broken windows wrong wheel design',
-        controlnet_type: 'depth', controlnet_conditioning_scale: 0.85,
-        strength: 0.78, guidance_scale: 8.5, num_inference_steps: 35,
+    if (hasKey) {
+      setProg(8, 'Uploading photo...');
+      var imgUrl = await falUpload(S.src);
+      var maskUrl = await segmentCar(imgUrl, function(pct, st){ setProg(pct, st); });
+      setProg(45, 'Applying new livery...');
+      var outUrl = await callFalWithProgress('fal-ai/sdxl-controlnet-union/inpainting', {
+        image_url: imgUrl,
+        mask_url: maskUrl,
+        prompt: 'a race car with this livery design: ' + prompt + '. Professional automotive photography, photorealistic, high detail, the livery follows the car body panel contours with realistic reflections and studio lighting',
+        negative_prompt: 'blurry, low quality, deformed, distorted body, changed background, changed wheels, floating graphics, warped panels',
+        strength: 0.95,
+        guidance_scale: 8.5,
+        num_inference_steps: 35,
         seed: Math.floor(Math.random() * 9999999)
-      }, function(pct, st) { setProg(pct, st); });
-      if (url) resultURL = await url2b64(url);
+      }, function(pct, st){ setProg(45 + pct*0.5, st || 'Applying new livery...'); });
+      var imgOut = falImageUrl(outUrl);
+      if (imgOut) resultURL = await url2b64(imgOut);
     }
     if (!resultURL) {
-      resultURL = await new Promise(function(resolve) {
-        mockLivery(prompt, resolve);
-      });
+      if (hasKey) toast('Fal.ai returned nothing — using preview mode', 'err');
+      resultURL = await new Promise(function(resolve){ mockLivery(prompt, resolve); });
     }
     if (!resultURL) throw new Error('No result generated');
 
@@ -776,20 +853,67 @@ async function runLivery() {
     document.getElementById('cmp-btn').disabled = false;
     addGal(resultURL, 'Livery - ' + prompt.slice(0, 22) + '...', 'livery');
     setSt('ready', mlbl(S.mode));
-    var msg = (S.cfg.provider === 'fal' && S.cfg.falKey)
-      ? 'Livery generated via Fal.ai ✓'
-      : 'Livery generated ✓  (add Fal.ai key in Settings for real AI)';
-    toast(msg, 'ok');
+    toast(hasKey ? 'Livery applied ✓ (background preserved)' : 'Livery generated ✓ (add Fal.ai key for real AI)', 'ok');
 
   } catch(e) {
     console.error('[runLivery]', e);
     endProg();
-    toast('Error: ' + e.message, 'err');
+    try {
+      var fb = await new Promise(function(resolve){ mockLivery(prompt, resolve); });
+      if (fb) { S.prevURL = fb; showPrev(fb); document.getElementById('res-badge').style.display='block'; document.getElementById('cmp-btn').disabled=false; addGal(fb, 'Livery (preview)', 'livery'); }
+    } catch(_) {}
+    toast('Fal.ai error: ' + e.message.slice(0,80) + ' — showing preview', 'err');
     setSt('ready', mlbl(S.mode));
   }
 }
 
-async function runBake(){if(!S.fc||!S.hasLogos||S.gen)return;var flat=flatC();if(!flat)return;setSt('busy','Baking logo...');startProg(['Extracting mask...','Analysing lighting...','Applying curvature...','Blending highlights...']);try{var resultURL=flat;if(S.cfg.provider==='fal'&&S.cfg.falKey){var url=await callFal('fal-ai/stable-diffusion-xl-v1-0/inpainting',{image_url:flat,mask_url:flat,prompt:'Integrate placed logo naturally into car surface. Apply realistic surface curvature distortion following car body panel geometry match ambient lighting and specular highlights add subtle shadow casting blend edges with existing paint finish. Factory-applied vinyl wrap quality.',negative_prompt:'flat logo no lighting wrong perspective floating decal',strength:0.32,guidance_scale:6.5,num_inference_steps:25,seed:Math.floor(Math.random()*9999999)});if(url)resultURL=await url2b64(url);}endProg();S.prevURL=resultURL;addGal(resultURL,'Logo Baked','logo');setSt('ready',mlbl(S.mode));toast(S.cfg.provider==='fal'&&S.cfg.falKey?'Logo baked via Fal.ai':'Logo baked (add Fal.ai key for real AI)','ok');}catch(e){endProg();toast('Error: '+e.message,'err');setSt('ready',mlbl(S.mode));}}
+async function runBake() {
+  if (!S.fc || !S.hasLogos || S.gen) { if(!S.hasLogos) toast('Add a logo first','err'); return; }
+  var flat = flatC();
+  if (!flat) return;
+  var hasKey = S.cfg.provider === 'fal' && S.cfg.falKey;
+  setSt('busy', 'Baking logo...');
+  startProg(hasKey
+    ? ['Uploading composite...','Detecting car surface...','Baking logo into paint...','Matching lighting...']
+    : ['Compositing logo...','Finishing...']);
+  var resultURL = flat;
+  try {
+    if (hasKey) {
+      setProg(8, 'Uploading composite...');
+      var imgUrl = await falUpload(flat);
+      // Light img2img pass to integrate the logo into the surface
+      var outUrl = await callFalWithProgress('fal-ai/sdxl-controlnet-union/inpainting', {
+        image_url: imgUrl,
+        mask_url: imgUrl,
+        prompt: 'race car with sponsor decals and logos professionally integrated into the painted body panels, realistic surface curvature, matched lighting and specular highlights, factory vinyl wrap quality, photorealistic',
+        negative_prompt: 'flat sticker, floating logo, wrong perspective, misaligned, low quality, deformed',
+        strength: 0.3,
+        guidance_scale: 6.5,
+        num_inference_steps: 28,
+        seed: Math.floor(Math.random() * 9999999)
+      }, function(pct, st){ setProg(20 + pct*0.7, st || 'Baking logo into paint...'); });
+      var imgOut = falImageUrl(outUrl);
+      if (imgOut) resultURL = await url2b64(imgOut);
+    }
+    endProg();
+    S.prevURL = resultURL;
+    showPrev(resultURL);
+    document.getElementById('res-badge').style.display = 'block';
+    document.getElementById('cmp-btn').disabled = false;
+    addGal(resultURL, hasKey ? 'Logo Baked (AI)' : 'Logo Composite', 'logo');
+    setSt('ready', mlbl(S.mode));
+    toast(hasKey ? 'Logo baked via Fal.ai ✓' : 'Logo composited ✓ (add Fal.ai key for AI bake)', 'ok');
+  } catch(e) {
+    console.error('[runBake]', e);
+    endProg();
+    S.prevURL = flat; showPrev(flat);
+    addGal(flat, 'Logo Composite (preview)', 'logo');
+    document.getElementById('cmp-btn').disabled = false;
+    toast('Fal.ai error: ' + e.message.slice(0,80) + ' — showing composite', 'err');
+    setSt('ready', mlbl(S.mode));
+  }
+}
+
 function updCB(){var v=document.getElementById('clr-in').value.trim();document.getElementById('clr-btn').className='gen-btn '+(!!S.src&&!!v&&!S.gen?'on':'off');}
 function onClrIn(v){S.selColor=v;if(/^#[0-9A-Fa-f]{3,6}$/.test(v))updCP(v);else document.getElementById('clr-prev').style.display='none';updCB();}
 function updCP(hex){var e=document.getElementById('clr-prev');e.style.background=hex;e.style.display='block';}
@@ -811,8 +935,16 @@ function openKbd(){document.getElementById('kbd-ov').classList.add('show');}
 function openCfg(){document.getElementById('fal-key').value=S.cfg.falKey||'';selProv(S.cfg.provider,true);document.getElementById('cfg-ov').classList.add('show');}
 function closeCfg(){document.getElementById('cfg-ov').classList.remove('show');}
 function selProv(p,silent){S.cfg.provider=p;document.querySelectorAll('.cfg-prov').forEach(function(el){el.classList.toggle('sel',el.dataset.p===p);});if(!silent)toast('Provider: '+p);}
-function saveCfg(){S.cfg.falKey=document.getElementById('fal-key').value.trim();localStorage.setItem('as-cfg',JSON.stringify(S.cfg));closeCfg();toast('Settings saved','ok');}
-async function testKey(){var k=document.getElementById('fal-key').value.trim();if(!k){toast('Enter a key first','err');return;}toast('Testing key...');try{var res=await fetch('https://fal.run/fal-ai/fast-sdxl',{method:'POST',headers:{'Authorization':'Key '+k,'Content-Type':'application/json'},body:JSON.stringify({prompt:'test',num_inference_steps:1,image_size:{width:64,height:64}})});toast(res.status!==401?'Fal.ai key is valid!':'Invalid key - check fal.ai',res.status!==401?'ok':'err');}catch(e){toast('Network error testing key','err');}}
+function saveCfg(){
+  S.cfg.falKey=document.getElementById('fal-key').value.trim();
+  // Auto-enable Fal.ai the moment a key is present
+  if(S.cfg.falKey && S.cfg.provider==='mock'){ S.cfg.provider='fal'; selProv('fal',true); }
+  if(!S.cfg.falKey){ S.cfg.provider='mock'; selProv('mock',true); }
+  localStorage.setItem('as-cfg',JSON.stringify(S.cfg));
+  closeCfg();
+  toast(S.cfg.provider==='fal'?'Saved — Fal.ai AI enabled ✓':'Settings saved','ok');
+}
+async function testKey(){var k=document.getElementById('fal-key').value.trim();if(!k){toast('Enter a key first','err');return;}toast('Testing key...');try{var res=await fetch('https://fal.run/fal-ai/fast-sdxl',{method:'POST',headers:{'Authorization':'Key '+k,'Content-Type':'application/json'},body:JSON.stringify({prompt:'test',num_inference_steps:1,image_size:{width:64,height:64}})});if(res.status!==401){S.cfg.falKey=k;S.cfg.provider='fal';selProv('fal',true);localStorage.setItem('as-cfg',JSON.stringify(S.cfg));toast('Fal.ai key valid — AI enabled ✓','ok');}else{toast('Invalid key — check fal.ai','err');}}catch(e){toast('Network error testing key','err');}}
 function exportSpec(){
   if(!S.gal.length)return;
   var date=new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'});
@@ -866,4 +998,45 @@ document.addEventListener('keydown',function(e){var tag=(e.target||{}).tagName;i
 init();
 </script>
 </body>
-</html>
+</html// ─── Upload a data URL to Fal storage, return a public URL ───────
+// The queue API needs a real URL, not a giant base64 string.
+async function falUpload(dataURL) {
+  // Convert data URL to blob
+  var res = await fetch(dataURL);
+  var blob = await res.blob();
+  // Initiate upload
+  var initRes = await fetch('https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3', {
+    method: 'POST',
+    headers: { 'Authorization': 'Key ' + S.cfg.falKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: blob.type || 'image/jpeg', file_name: 'car.jpg' })
+  });
+  if (!initRes.ok) throw new Error('Upload init failed: ' + initRes.status);
+  var init = await initRes.json();
+  // PUT the file to the signed upload URL
+  var putRes = await fetch(init.upload_url, {
+    method: 'PUT',
+    headers: { 'Content-Type': blob.type || 'image/jpeg' },
+    body: blob
+  });
+  if (!putRes.ok) throw new Error('Upload PUT failed: ' + putRes.status);
+  return init.file_url;
+}
+
+// ─── Segment the car → return a mask image URL ──────────────────
+// Uses evf-sam text-prompt segmentation. White = car, black = background.
+async function segmentCar(imageUrl, onProgress) {
+  if (onProgress) onProgress(15, 'Detecting the car...');
+  var segResp = await callFalWithProgress('fal-ai/evf-sam', {
+    image_url: imageUrl,
+    prompt: 'the race car body and painted panels',
+    mask_only: true,
+    expand_mask: 8,
+    blur_mask: 6,
+    fill_holes: true
+  }, function(pct, st){ if(onProgress) onProgress(15 + pct*0.25, st || 'Detecting the car...'); });
+  var maskUrl = falImageUrl(segResp);
+  if (!maskUrl) throw new Error('Car segmentation returned no mask');
+  return maskUrl;
+}
+
+>

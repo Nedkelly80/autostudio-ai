@@ -631,54 +631,99 @@ function mockColor(color, cb) {
       var tr = pd[0], tg = pd[1], tb = pd[2];
       var targetHSL = rgbToHsl(tr, tg, tb);
 
-      // ── Find the car's dominant hue by sampling the image centre ─
-      // Sample a central band — avoids sky top/road bottom
+      // ── Find the car's dominant hue by sampling image centre ─────
       var sx = Math.round(W * 0.15), sy = Math.round(H * 0.25);
       var sw = Math.round(W * 0.70), sh = Math.round(H * 0.55);
       var sampleData = ctx.getImageData(sx, sy, sw, sh).data;
 
-      // Build a hue histogram (36 buckets = 10° each)
       var buckets = new Array(36).fill(0);
       for (var i = 0; i < sampleData.length; i += 4) {
-        var sr = sampleData[i], sg = sampleData[i+1], sb2 = sampleData[i+2];
+        var sr = sampleData[i], sg = sampleData[i + 1], sb2 = sampleData[i + 2];
         var hsl = rgbToHsl(sr, sg, sb2);
-        // Only count well-saturated, mid-luminance pixels (car body)
-        if (hsl[1] > 0.12 && hsl[2] > 0.08 && hsl[2] < 0.88) {
-          buckets[Math.floor(hsl[0] * 36) % 36]++;
-        }
+        if (hsl[1] > 0.12 && hsl[2] > 0.08 && hsl[2] < 0.88) buckets[Math.floor(hsl[0] * 36) % 36]++;
       }
       var peakBucket = buckets.indexOf(Math.max.apply(null, buckets));
-      var carHue = peakBucket / 36;  // 0–1
+      var carHue = peakBucket >= 0 ? peakBucket / 36 : targetHSL[0];
 
-      // Widen tolerance: include 2 buckets either side (±20°)
-      var HUE_TOL = 0.10;   // ±36° of the wheel
-      var SAT_MIN = 0.06;   // skip nearly-grey pixels (road, concrete)
-      var LUM_MIN = 0.05;   // skip near-black (deep shadows)
-      var LUM_MAX = 0.94;   // skip near-white (sky, reflections)
-
-      // ── Pixel-by-pixel: only recolour car-hue pixels ────────────
+      // ── Build a contiguous car mask to avoid whole-screen tinting ─
+      var HUE_TOL = 0.12;
+      var SAT_MIN = 0.05;
+      var LUM_MIN = 0.05;
+      var LUM_MAX = 0.94;
       var id = ctx.getImageData(0, 0, W, H);
       var px = id.data;
-      for (var j = 0; j < px.length; j += 4) {
-        var pr = px[j], pg = px[j+1], pb = px[j+2];
-        var hsl2 = rgbToHsl(pr, pg, pb);
-        var h2 = hsl2[0], s2 = hsl2[1], l2 = hsl2[2];
+      var total = W * H;
+      var cand = new Uint8Array(total);
+      var carMask = new Uint8Array(total);
 
-        // Gate: skip background / shadows / highlights
-        if (s2 < SAT_MIN || l2 < LUM_MIN || l2 > LUM_MAX) continue;
+      function idx(x, y) { return y * W + x; }
+      function inside(x, y) { return x >= 0 && y >= 0 && x < W && y < H; }
+      function inCoreBand(x, y) {
+        var nx = x / W, ny = y / H;
+        return nx > 0.08 && nx < 0.92 && ny > 0.22 && ny < 0.90;
+      }
 
-        // Gate: skip pixels whose hue doesn't match the car
-        if (hueDiff(h2, carHue) > HUE_TOL) continue;
+      for (var y = 0; y < H; y++) {
+        for (var x = 0; x < W; x++) {
+          var p = idx(x, y);
+          var off = p * 4;
+          var hsl2 = rgbToHsl(px[off], px[off + 1], px[off + 2]);
+          var h2 = hsl2[0], s2 = hsl2[1], l2 = hsl2[2];
+          if (s2 < SAT_MIN || l2 < LUM_MIN || l2 > LUM_MAX) continue;
+          if (hueDiff(h2, carHue) > HUE_TOL) continue;
+          if (!inCoreBand(x, y)) continue;
+          cand[p] = 1;
+        }
+      }
 
-        // Shift hue to target, keep saturation boosted, preserve luminance
-        var newSat = Math.max(s2, targetHSL[1] * 0.7);
-        var newRGB = hslToRgb(targetHSL[0], newSat, l2);
+      var stack = [];
+      var sx0 = Math.round(W * 0.35), sx1 = Math.round(W * 0.65);
+      var sy0 = Math.round(H * 0.38), sy1 = Math.round(H * 0.78);
+      for (var syi = sy0; syi <= sy1; syi += Math.max(1, Math.round(H * 0.05))) {
+        for (var sxi = sx0; sxi <= sx1; sxi += Math.max(1, Math.round(W * 0.05))) {
+          if (!inside(sxi, syi)) continue;
+          var sp = idx(sxi, syi);
+          if (cand[sp] && !carMask[sp]) { carMask[sp] = 1; stack.push(sp); }
+        }
+      }
 
-        // Blend strength scales with pixel saturation (edges blend softer)
-        var blend = Math.min(1, s2 * 6);
-        px[j]   = Math.round(pr * (1 - blend) + newRGB[0] * blend);
-        px[j+1] = Math.round(pg * (1 - blend) + newRGB[1] * blend);
-        px[j+2] = Math.round(pb * (1 - blend) + newRGB[2] * blend);
+      var nbs = [-1, 1, -W, W];
+      while (stack.length) {
+        var cp = stack.pop();
+        for (var ni = 0; ni < 4; ni++) {
+          var np = cp + nbs[ni];
+          if (np < 0 || np >= total || carMask[np] || !cand[np]) continue;
+          var nx = np % W, ny = (np / W) | 0;
+          if (!inCoreBand(nx, ny)) continue;
+          carMask[np] = 1;
+          stack.push(np);
+        }
+      }
+
+      // Mild dilation to catch panel edges and reflections
+      var grown = carMask.slice();
+      for (var y2 = 1; y2 < H - 1; y2++) {
+        for (var x2 = 1; x2 < W - 1; x2++) {
+          var gp = idx(x2, y2);
+          if (grown[gp] || !cand[gp]) continue;
+          if (carMask[gp - 1] || carMask[gp + 1] || carMask[gp - W] || carMask[gp + W]) grown[gp] = 1;
+        }
+      }
+      carMask = grown;
+
+      // ── Pixel-by-pixel recolour only masked car region ───────────
+      for (var j = 0; j < total; j++) {
+        if (!carMask[j]) continue;
+        var off2 = j * 4;
+        var pr = px[off2], pg = px[off2 + 1], pb = px[off2 + 2];
+        var hsl3 = rgbToHsl(pr, pg, pb);
+        var s3 = hsl3[1], l3 = hsl3[2];
+        var newSat = Math.max(s3, targetHSL[1] * 0.7);
+        var newRGB = hslToRgb(targetHSL[0], newSat, l3);
+        var blend = Math.min(1, Math.max(0.22, s3 * 5.5));
+        px[off2]     = Math.round(pr * (1 - blend) + newRGB[0] * blend);
+        px[off2 + 1] = Math.round(pg * (1 - blend) + newRGB[1] * blend);
+        px[off2 + 2] = Math.round(pb * (1 - blend) + newRGB[2] * blend);
       }
 
       ctx.putImageData(id, 0, 0);

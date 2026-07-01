@@ -70,4 +70,25 @@ cd autostudio-ai
 npx serve .   # or just open index.html in a browser
 ```
 
+## Android app
+
+The `android/` folder contains a Trusted Web Activity (TWA) project that wraps
+the live PWA in an installable native shell.
+
+**Build locally:**
+
+```bash
+cd android
+./gradlew assembleDebug
+# APK output: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Install on a phone:** copy the APK to the device, enable "Install unknown
+apps" for the app you use to open it (Files, browser, etc.), then tap the APK
+to install.
+
+**CI builds:** every push touching `android/` triggers
+`.github/workflows/android-apk.yml`, which builds the debug APK and uploads it
+as a downloadable workflow artifact.
+
 Built by **TRM Racing Looms** · Darwin NT, Australia
